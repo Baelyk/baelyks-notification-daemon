@@ -22,6 +22,14 @@
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
       toolchain = fenix.packages.${system}.stable.toolchain;
+
+      # For Iced, https://github.com/iced-rs/iced/blob/master/DEPENDENCIES.md
+      dlopenLibraries = with pkgs; [
+        libxkbcommon
+        vulkan-loader
+        wayland
+      ];
+      rpath = nixpkgs.lib.makeLibraryPath dlopenLibraries;
     in {
       packages.default =
         (pkgs.makeRustPlatform {
@@ -36,6 +44,13 @@
 
           cargoLock.lockFile = ./Cargo.lock;
 
+          # For Iced, modified based on Halloy's nixpkg
+          buildInputs = dlopenLibraries;
+          postFixup = ''
+            rpath=$(patchelf --print-rpath $out/bin/${name})
+            patchelf --set-rpath "$rpath:${nixpkgs.lib.makeLibraryPath dlopenLibraries}" $out/bin/${name}
+          '';
+
           # DBUS Service file
           postInstall = ''
             mkdir -p $out/share/dbus-1/services
@@ -47,27 +62,13 @@
           '';
         };
 
-      devShells.default = pkgs.mkShell rec {
-        # For Iced https://github.com/iced-rs/iced/blob/master/DEPENDENCIES.md
-        buildInputs = with pkgs; [
-          expat
-          fontconfig
-          freetype
-          freetype.dev
-          libGL
-          pkg-config
-          xorg.libX11
-          xorg.libXcursor
-          xorg.libXi
-          xorg.libXrandr
-          wayland
-          libxkbcommon
-        ];
-        LD_LIBRARY_PATH = builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;
-
+      devShells.default = pkgs.mkShell {
         packages = [
           toolchain
         ];
+
+        # For Iced, https://github.com/iced-rs/iced/blob/master/DEPENDENCIES.md
+        env.RUSTFLAGS = "-C link-arg=-Wl,-rpath,${rpath}";
 
         shellHook = ''
           echo $(cargo --version)
