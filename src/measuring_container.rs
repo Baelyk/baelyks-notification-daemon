@@ -38,17 +38,17 @@ impl<'a, Message, Theme, Renderer> widget::Widget<Message, Theme, Renderer>
 where
     Renderer: renderer::Renderer,
 {
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> iced::event::Status {
+    ) {
         // On redraws, measure the size of the widget, and if it's different from last time,
         // publish a message with the new size
         if let iced::Event::Window(iced::window::Event::RedrawRequested(_)) = event {
@@ -63,7 +63,7 @@ where
         }
 
         // Let the contents capture the event
-        if let iced::event::Status::Captured = self.child.as_widget_mut().on_event(
+        self.child.as_widget_mut().update(
             &mut tree.children[0],
             event,
             layout.children().next().unwrap(),
@@ -72,11 +72,7 @@ where
             clipboard,
             shell,
             viewport,
-        ) {
-            return iced::event::Status::Captured;
-        }
-
-        iced::event::Status::Ignored
+        );
     }
 
     fn size(&self) -> Size<Length> {

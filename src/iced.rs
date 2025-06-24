@@ -6,7 +6,7 @@ use iced::widget::{button, column, container, mouse_area, row, text, Column, Row
 use iced::{window, Background, Border, Element, Length, Subscription, Task, Theme};
 use iced_layershell::reexport::{Anchor, NewLayerShellSettings};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
-use iced_layershell::{to_layer_message, MultiApplication};
+use iced_layershell::{daemon, to_layer_message};
 use log::{debug, trace, warn};
 
 use crate::dbus::{self, DbusMessage, NotificationClosedReason, NotificationSignaller};
@@ -15,14 +15,19 @@ use crate::measuring_container::MeasuringContainer;
 use crate::notification::{notification_time, Notification, Urgency};
 
 pub fn run() -> Result<(), iced_layershell::Error> {
-    State::run(Settings {
-        layer_settings: LayerShellSettings {
-            start_mode: StartMode::Background,
+    daemon(State::default, State::namespace, State::update, State::view)
+        .subscription(State::subscription)
+        .style(State::style)
+        .theme(State::theme)
+        .settings(Settings {
+            layer_settings: LayerShellSettings {
+                start_mode: StartMode::Background,
+                ..Default::default()
+            },
+            default_font: iced::Font::with_name("JetBrains Mono"),
             ..Default::default()
-        },
-        default_font: iced::Font::with_name("JetBrains Mono"),
-        ..Default::default()
-    })
+        })
+        .run()
 }
 
 struct State {
@@ -49,6 +54,7 @@ enum Message {
     Dbus(DbusMessage),
     Tick,
     UserDismissed(u32),
+    WindowClosed(window::Id),
 }
 
 const FONT_SIZE: f32 = 20.0;
@@ -161,8 +167,8 @@ impl State {
     fn body_markup(&self, body: &[BodyElement]) -> Element<Message> {
         Column::from_iter(body.iter().map(|element| {
             match element {
-                BodyElement::RichText(spans) => {
-                    text::Rich::from_iter(spans.iter().map(|RichTextSpan { style, text }| {
+                BodyElement::RichText(spans) => text::Rich::from_iter(spans.iter().map(
+                    |RichTextSpan { style, text }| -> iced::advanced::text::Span<'_, ()> {
                         let mut font = iced::Font::with_name("JetBrains Mono");
                         if style.bold {
                             font.weight = iced::font::Weight::Bold;
@@ -174,9 +180,9 @@ impl State {
                             .size(FONT_SIZE)
                             .font(font)
                             .underline(style.underline)
-                    }))
-                    .into()
-                }
+                    },
+                ))
+                .into(),
                 // Tooltip doesn't work?
                 BodyElement::Image { src, alt } => iced::widget::tooltip(
                     iced::widget::image(src),
@@ -231,17 +237,8 @@ impl State {
     }
 }
 
-impl MultiApplication for State {
-    type Executor = iced::executor::Default;
-    type Message = Message;
-    type Flags = ();
-    type Theme = Theme;
-
-    fn new(_flags: Self::Flags) -> (Self, Task<Self::Message>) {
-        (Self::default(), Task::none())
-    }
-
-    fn namespace(&self) -> String {
+impl State {
+    fn namespace() -> String {
         String::from("Notifications")
     }
 
@@ -267,16 +264,8 @@ impl MultiApplication for State {
         // Prune expired notifications
         self.remove_expired();
 
-        // If there are no alerts to display, close the window
-        if self.alerts.is_empty() {
-            if let Some(id) = self.window_id {
-                debug!("Closing layer shell");
-                return Task::done(Message::RemoveWindow(id));
-            }
-        }
-
         // Process messages
-        match message {
+        let task = match message {
             Message::ContainerResized(height) => {
                 trace!("Container resized: {:?}", height);
 
@@ -362,8 +351,22 @@ impl MultiApplication for State {
 
                 Task::none()
             }
+            Message::WindowClosed(id) => {
+                self.remove_id(id);
+                Task::none()
+            }
             _ => unreachable!(),
+        };
+
+        // If there are no alerts to display, close the window
+        if self.alerts.is_empty() {
+            if let Some(id) = self.window_id {
+                debug!("Closing layer shell");
+                return Task::done(Message::RemoveWindow(id));
+            }
         }
+
+        task
     }
 
     fn remove_id(&mut self, _id: window::Id) {
@@ -375,20 +378,20 @@ impl MultiApplication for State {
         // Send a message every second to run update, to update times and remove expired
         // notifications
         let ticker = iced::time::every(iced::time::Duration::from_secs(1)).map(|_| Message::Tick);
-        Subscription::batch([dbus, ticker])
+        let window_closed = iced::window::close_events().map(Message::WindowClosed);
+        Subscription::batch([dbus, ticker, window_closed])
     }
 
-    fn style(&self, theme: &Theme) -> iced_layershell::Appearance {
-        use iced_layershell::Appearance;
-        Appearance {
+    fn style(&self, theme: &Theme) -> iced::theme::Style {
+        iced::theme::Style {
             background_color: iced::Color::TRANSPARENT,
             text_color: theme.palette().text,
         }
     }
 
-    fn theme(&self) -> Self::Theme {
+    fn theme(&self, _: window::Id) -> Theme {
         iced::Theme::custom(
-            "Gruvbox Dark".into(),
+            "Gruvbox Dark".to_string(),
             iced::theme::Palette {
                 text: iced::color!(0xebdbb2),
                 ..iced::theme::Palette::GRUVBOX_DARK
