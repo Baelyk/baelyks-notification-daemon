@@ -300,9 +300,12 @@ impl State {
                 DbusMessage::Notify(notification) => {
                     debug!("Received notification {}", notification.id);
 
-                    // Add new notification to alerts
-                    self.alerts.push(notification.id);
-                    self.notifications.insert(notification.id, notification);
+                    // Insert the notification, but only add to alerts if it didn't exist before,
+                    // in order to replace the notification in place, if this is a replacement
+                    let id = notification.id;
+                    if self.notifications.insert(id, notification).is_none() {
+                        self.alerts.push(id);
+                    }
 
                     // Create the layer shell if it doesn't exist
                     if self.window_id.is_none() {
